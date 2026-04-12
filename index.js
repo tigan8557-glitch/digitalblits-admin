@@ -123,7 +123,7 @@ try {
 // -----------------------------
 // Replace the DB name at the end of the URI if you want a different default database.
 // WARNING: credentials are embedded in this file as requested.
-const MONGODB_URI = 'mongodb+srv://Blitz:Mark075555@digitalblitz.piad2pr.mongodb.net/Stacks?retryWrites=true&w=majority';
+const MONGODB_URI = 'mongodb+srv://Blitz:Mark075555@digitalblitz.piad2pr.mongodb.net/Stacks?retryWrites=true&w=majority&appName=DIGITALBLITZ';
 
 if (!MONGODB_URI) {
   console.error('❌ MONGODB_URI is not set. Please update the connection string in this file.');
