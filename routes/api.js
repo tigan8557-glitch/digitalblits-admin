@@ -42,7 +42,12 @@ const userSchema = new mongoose.Schema({
   resetRequested: { type: Boolean, default: false },
 
   // Persisted frozen amount so frontend can show deducted amount across refreshes.
-  frozenAmount: { type: Number, default: 0 }
+  frozenAmount: { type: Number, default: 0 },
+
+  // Credit score & admin flag (NEW)
+  creditScore: { type: Number, default: 100 }, // 0-100, default 100
+  isAdmin: { type: Boolean, default: false },
+
 }, { collection: 'users', strict: false });
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
@@ -775,7 +780,10 @@ router.post('/users/register', async (req, res) => {
         token: crypto.randomBytes(24).toString('hex'),
         createdAt: new Date().toISOString(),
         currentSet: 1,
-        frozenAmount: 0
+        frozenAmount: 0,
+        // ensure new users start at full credit
+        creditScore: 100,
+        isAdmin: false
     };
 
     // Ensure _id is provided because the schema declares _id: String (Mongoose won't auto-generate a string _id)
@@ -864,7 +872,7 @@ router.post('/users/register', async (req, res) => {
           return res.json({ success: true, user: created2 });
         } catch (err2) {
           console.error('users/register retry failed:', err2 && err2.stack ? err2.stack : err2);
-          return res.status(500).json({ success: false, message: 'Failed to create user', error: err2 && err2.message ? err2.message : String(err2) });
+          return res.status(500).json({ success: false, message: err2 && err2.message ? err2.message : 'Failed to create user (retry)' });
         }
       }
       return res.status(500).json({ success: false, message: 'Internal server error', error: msg });
@@ -1036,7 +1044,10 @@ router.get('/user-profile', verifyUserToken, async (req, res) => {
             registeredSetsToday,
             signState: dbUser.signState || { signedCount: 0, lastSignDate: null },
             resetRequested: !!dbUser.resetRequested,
-            frozenAmount: Number(dbUser.frozenAmount || 0)
+            frozenAmount: Number(dbUser.frozenAmount || 0),
+            // credit score exposed to frontends
+            creditScore: (typeof dbUser.creditScore !== 'undefined') ? dbUser.creditScore : 100,
+            isAdmin: !!dbUser.isAdmin
         }
     });
 });
@@ -1805,5 +1816,72 @@ router.post('/admin/notification', async (req, res) => {
     });
     res.json({ success: true });
 });
+
+// ----------------------- Admin Endpoint: Update User Credit Score (NEW) -----------------------
+router.patch('/admin/users/:userId/credit_score', async (req, res) => {
+  try {
+    const { adminSecret, creditScore } = req.body;
+    const ADMIN_SECRET = 'yoursecretpassword';
+    if (adminSecret !== ADMIN_SECRET) {
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const val = Number(creditScore);
+    if (!Number.isFinite(val) || val < 0 || val > 100) {
+      return res.status(400).json({ success: false, message: 'creditScore must be a number between 0 and 100.' });
+    }
+
+    const userIdArg = String(req.params.userId || '').trim();
+    if (!userIdArg) return res.status(400).json({ success: false, message: 'Missing user identifier in URL.' });
+
+    let user = null;
+    // Try object id first
+    try {
+      if (mongoose.Types.ObjectId.isValid(userIdArg)) {
+        user = await User.findById(userIdArg);
+      }
+    } catch (err) {
+      // ignore
+    }
+    // Fallback to username lookup
+    if (!user) {
+      user = await User.findOne({ username: userIdArg });
+    }
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    // Set both new and legacy fields if present
+    user.creditScore = val;
+    try {
+      // keep legacy compatibility if code references credit_score
+      user.credit_score = val;
+    } catch (e) {
+      // ignore if strict prevents it
+    }
+
+    await user.save();
+
+    // Audit log entry (best-effort)
+    try {
+      await Log.create({
+        type: 'admin_credit_update',
+        admin: 'admin', // we don't store admin identity here because this endpoint uses adminSecret
+        username: user.username,
+        userId: String(user._id),
+        newCreditScore: val,
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('Failed to create credit update log:', e && e.message ? e.message : e);
+    }
+
+    return res.json({ success: true, message: 'Credit score updated.', user: { username: user.username, id: user._id, creditScore: val } });
+  } catch (err) {
+    console.error('PATCH /admin/users/:userId/credit_score error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to update credit score', error: err.message });
+  }
+});
+// ----------------------- end credit score admin endpoint -----------------------
 
 module.exports = router;
