@@ -166,6 +166,8 @@
       .user-detail-panel .modal .modal-content { width: 94%; padding: 12px; }
     }
 
+    .user-link { color:#1d4ed8; cursor:pointer; text-decoration:underline; }
+
     /* Simple toast styling (re-used) */
     .toast {
       visibility: hidden;
@@ -227,6 +229,7 @@
                 <th>Current Set</th>
                 <th>Exchange</th>
                 <th>Wallet Address</th>
+                <th>Credit Score</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -270,6 +273,7 @@
             <div class="compact">VIP: <span id="detailVip">—</span></div>
             <div class="compact">Balance: $<span id="detailBalance">0.00</span></div>
             <div class="compact">Current Set: <span id="detailSet">—</span></div>
+            <div class="compact">Credit: <span id="detailCreditScore">100%</span></div>
           </div>
         </div>
 
@@ -428,49 +432,55 @@
               <input type="number" id="modalVip" placeholder="VIP Level" min="0" value="1" />
             </div>
             <div class="field-wrap">
-              <label class="field-label" for="modalInviteCode">Invite Code</label>
-              <input type="text" id="modalInviteCode" placeholder="Invite Code" />
+              <label class="field-label" for="modalCreditScore">Credit Score</label>
+              <input type="number" id="modalCreditScore" placeholder="Credit Score (0-100)" min="0" max="100" value="100" />
             </div>
           </div>
 
           <div class="row">
+            <div class="field-wrap">
+              <label class="field-label" for="modalInviteCode">Invite Code</label>
+              <input type="text" id="modalInviteCode" placeholder="Invite Code" />
+            </div>
             <div class="field-wrap">
               <label class="field-label" for="modalReferredBy">Referred By</label>
               <input type="text" id="modalReferredBy" placeholder="Referred By" />
             </div>
+          </div>
+
+          <div class="row">
             <div class="field-wrap">
               <label class="field-label" for="modalCurrentSet">Current Set</label>
               <input type="number" id="modalCurrentSet" placeholder="Current Set" min="0" value="0" />
             </div>
-          </div>
-
-          <div class="row">
             <div class="field-wrap">
               <label class="field-label" for="modalCreatedAt">Created At (readonly)</label>
               <input type="text" id="modalCreatedAt" placeholder="Created At (readonly)" readonly />
             </div>
+          </div>
+
+          <div class="row">
             <div class="field-wrap">
               <label class="field-label" for="modalTaskCountToday">Task Count Today</label>
               <input type="number" id="modalTaskCountToday" placeholder="Task Count Today" min="0" value="0" />
+            </div>
+            <div class="field-wrap">
+              <label class="field-label" for="modalTasksCompletedInSet">Tasks Completed In Set</label>
+              <input type="number" id="modalTasksCompletedInSet" placeholder="Tasks Completed In Set" min="0" value="0" />
             </div>
           </div>
 
           <div class="row">
             <div class="field-wrap">
-              <label class="field-label" for="modalTasksCompletedInSet">Tasks Completed In Set</label>
-              <input type="number" id="modalTasksCompletedInSet" placeholder="Tasks Completed In Set" min="0" value="0" />
-            </div>
-            <div class="field-wrap">
               <label class="field-label" for="modalSetStartingBalance">Set Starting Balance</label>
               <input type="number" id="modalSetStartingBalance" placeholder="Set Starting Balance" min="0" step="0.01" value="0" />
             </div>
+            <div class="field-wrap">
+              <label class="field-label" for="modalExchange">Exchange</label>
+              <input type="text" id="modalExchange" placeholder="Exchange" />
+            </div>
           </div>
 
-          <!-- Exchange & wallet -->
-          <div class="field-wrap">
-            <label class="field-label" for="modalExchange">Exchange</label>
-            <input type="text" id="modalExchange" placeholder="Exchange" />
-          </div>
           <div class="field-wrap">
             <label class="field-label" for="modalWalletAddress">Wallet Address</label>
             <input type="text" id="modalWalletAddress" placeholder="Wallet Address" />
@@ -553,6 +563,7 @@
           ? `Set ${user.currentSet || 1}`
           : "—";
         const escUsername = escapeForInline(user.username || "");
+        const credit = (typeof user.creditScore !== 'undefined' && user.creditScore !== null) ? Number(user.creditScore) : 100;
         table.innerHTML += `
           <tr>
             <td><input type="checkbox" onclick="selectUser('${escUsername}', this)" ${checked}></td>
@@ -573,6 +584,7 @@
             </td>
             <td>${user.exchange || ""}</td>
             <td>${user.walletAddress || ""}</td>
+            <td>${credit}%</td>
             <td class="action-icons">
               <button class="icon-btn" title="Open" onclick="openUserPage('${escUsername}')"><i class="fa fa-eye"></i></button>
               <button class="icon-btn" title="Edit VIP" onclick="openVipModal('${escUsername}')"><i class="fa fa-star"></i></button>
@@ -657,6 +669,7 @@
       document.getElementById("modalExchange").value = "";
       document.getElementById("modalWalletAddress").value = "";
       document.getElementById("modalCreatedAt").value = "";
+      document.getElementById("modalCreditScore").value = 100;
       document.getElementById("userDetailPanel").classList.add('show');
       document.getElementById("userModal").style.display = "flex";
     }
@@ -693,6 +706,7 @@
       const exchange = document.getElementById("modalExchange").value.trim();
       const walletAddress = document.getElementById("modalWalletAddress").value.trim();
       const token = document.getElementById("modalToken").value || null;
+      const creditScore = readNumber("modalCreditScore");
 
       const payload = {
         username,
@@ -713,7 +727,8 @@
         tasksCompletedInSet,
         setStartingBalance,
         exchange,
-        walletAddress
+        walletAddress,
+        creditScore: (creditScore === null ? undefined : Math.max(0, Math.min(100, Math.round(creditScore))))
       };
       Object.keys(payload).forEach(k => {
         if (payload[k] === undefined || payload[k] === null) delete payload[k];
@@ -735,6 +750,20 @@
             return;
           }
           showToast("User updated!");
+
+          // Best-effort: notify the user about the credit score change
+          try {
+            await fetch('/admin/notifications', {
+              method: 'POST',
+              headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem('adminToken') },
+              body: JSON.stringify({
+                title: "Profile updated",
+                message: `Your credit score was updated to ${payload.creditScore ?? 100}%.`,
+                recipients: [editingOriginalUsername]
+              })
+            });
+          } catch (e) { /* ignore notification failures */ }
+
         } catch (err) {
           showToast("Network/server error when updating user.");
         }
@@ -758,6 +787,20 @@
             return;
           }
           showToast("User added!");
+
+          // Best-effort: notify the user about the credit score (new account)
+          try {
+            await fetch('/admin/notifications', {
+              method: 'POST',
+              headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem('adminToken') },
+              body: JSON.stringify({
+                title: "Welcome",
+                message: `Your account was created. Your credit score is ${payload.creditScore ?? 100}%.`,
+                recipients: [username]
+              })
+            });
+          } catch (e) { /* ignore notification failures */ }
+
         } catch (err) {
           showToast("Network/server error when adding user.");
         }
@@ -808,6 +851,7 @@
       document.getElementById("modalExchange").value = user.exchange || "";
       document.getElementById("modalWalletAddress").value = user.walletAddress || "";
       document.getElementById("modalToken").value = user.token || "";
+      document.getElementById("modalCreditScore").value = (typeof user.creditScore !== 'undefined' && user.creditScore !== null) ? user.creditScore : 100;
       document.getElementById('userDetailPanel').classList.add('show');
       document.getElementById("userModal").style.display = "flex";
     }
@@ -893,7 +937,7 @@
         "ID","Username","Phone","VIP Level","Balance","Status","Current Set",
         "Exchange","Wallet Address","Login Password","Withdraw Password","Gender",
         "Commission","Commission Today","Last Commission Reset","Invite Code","Referred By",
-        "Created At","Task Count Today","Tasks Completed In Set","Set Starting Balance","Token"
+        "Created At","Task Count Today","Tasks Completed In Set","Set Starting Balance","Token","Credit Score"
       ];
       const rows = allUsers.map(u => ([
         u.id || "",
@@ -917,7 +961,8 @@
         u.taskCountToday != null ? u.taskCountToday : "",
         u.tasksCompletedInSet != null ? u.tasksCompletedInSet : "",
         u.setStartingBalance != null ? u.setStartingBalance : "",
-        u.token || ""
+        u.token || "",
+        u.creditScore != null ? u.creditScore : 100
       ]));
       const csv = [header, ...rows].map(row => row.map(String).map(s=>`"${s.replace(/"/g,'""')}"`).join(",")).join("\n");
       const blob = new Blob([csv], { type: "text/csv" });
@@ -1005,6 +1050,7 @@
         document.getElementById('detailBalance').textContent = Number(user.balance || 0).toFixed(2);
         document.getElementById('detailSet').textContent = user.currentSet != null ? user.currentSet : '—';
         document.getElementById('suspendBtn').textContent = user.status === 'Suspended' ? 'Unsuspend' : 'Suspend';
+        document.getElementById('detailCreditScore').textContent = (user.creditScore != null ? `${user.creditScore}%` : '100%');
 
         window._currentDetailUser = username;
 
