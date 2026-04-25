@@ -1,3 +1,4 @@
+// admin (6).js
 const express = require('express');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
@@ -683,6 +684,50 @@ router.get('/users/:username', asyncHandler(async (req, res) => {
     const user = await User.findOne({ username }).lean();
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     res.json({ success: true, user });
+}));
+
+// ----------------------- NEW: Update single user's credit score (admin panel) -----------------------
+router.patch('/users/:username/credit_score', asyncHandler(async (req, res) => {
+    const { username } = req.params;
+    const { creditScore } = req.body;
+
+    if (typeof creditScore === 'undefined') {
+        return res.status(400).json({ success: false, message: 'creditScore is required in request body' });
+    }
+
+    const val = Number(creditScore);
+    if (!Number.isFinite(val) || val < 0 || val > 100) {
+        return res.status(400).json({ success: false, message: 'creditScore must be a number between 0 and 100.' });
+    }
+
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+    user.creditScore = val;
+    try {
+        // keep legacy field name for compatibility
+        user.credit_score = val;
+    } catch (e) {
+        // ignore if strict prevents it
+    }
+
+    await user.save();
+
+    // Audit log (best-effort)
+    try {
+        await Log.create({
+            type: 'admin_credit_update',
+            admin: 'admin', // token-based admin identity not included here
+            username: user.username,
+            userId: String(user._id),
+            newCreditScore: val,
+            createdAt: new Date().toISOString()
+        });
+    } catch (e) {
+        console.warn('Failed to create credit update log:', e && e.message ? e.message : e);
+    }
+
+    return res.json({ success: true, message: 'Credit score updated.', user: { username: user.username, id: user._id, creditScore: val } });
 }));
 
 router.post('/reset-user-task-set', asyncHandler(async (req, res) => {
